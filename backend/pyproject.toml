@@ -1,0 +1,2 @@
+[tool.vercel.scripts]
+build = "if [ \"$VERCEL_ENV\" = \"production\" ]; then python -m flask --app app db upgrade; fi"
