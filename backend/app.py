@@ -57,8 +57,15 @@ def create_app(test_config=None):
     if app.config['SQLALCHEMY_DATABASE_URI'].startswith(('postgres://', 'postgresql://')):
         app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLALCHEMY_DATABASE_URI'].replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1)
     if app.config['APP_ENV'] == 'production':
-        if not os.getenv('DATABASE_URL') or len(os.getenv('JWT_ACCESS_SECRET', '')) < 32 or len(os.getenv('FLASK_SECRET_KEY', '')) < 32:
+        client_origin = urlparse(app.config['CLIENT_URL'])
+        if not app.config['SQLALCHEMY_DATABASE_URI'] or len(app.config['JWT_ACCESS_SECRET']) < 32 or len(app.config['SECRET_KEY']) < 32:
             raise RuntimeError('Production requires DATABASE_URL, FLASK_SECRET_KEY, and JWT_ACCESS_SECRET (32+ characters).')
+        if client_origin.scheme != 'https' or not client_origin.netloc or client_origin.hostname in ('localhost', '127.0.0.1'):
+            raise RuntimeError('Production requires CLIENT_URL to be the public HTTPS frontend origin.')
+        if not app.config['COOKIE_SECURE']:
+            raise RuntimeError('Production requires COOKIE_SECURE=true.')
+        if not app.config['RATELIMIT_STORAGE_URI'].startswith(('redis://', 'rediss://')):
+            raise RuntimeError('Production requires a shared Redis RATELIMIT_STORAGE_URI.')
     CORS(app, origins=[app.config['CLIENT_URL']], supports_credentials=True)
     db.init_app(app)
     migrate.init_app(app, db, directory=os.path.join(os.path.dirname(__file__), 'migrations'))
@@ -70,6 +77,25 @@ def create_app(test_config=None):
 
     def error(message, status=400):
         return jsonify({'error': message}), status
+
+    def same_origin_required(fn):
+        @wraps(fn)
+        def wrapped(*args, **kwargs):
+            origin = request.headers.get('Origin')
+            if origin and origin.rstrip('/') != app.config['CLIENT_URL'].rstrip('/'):
+                return error('Request origin is not allowed.', 403)
+            return fn(*args, **kwargs)
+        return wrapped
+
+    @app.after_request
+    def security_headers(response):
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+        response.headers.setdefault('X-Frame-Options', 'DENY')
+        response.headers.setdefault('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+        if app.config['APP_ENV'] == 'production':
+            response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+        return response
 
     def serialize_user(user):
         return {'id': user.id, 'email': user.email, 'username': user.username, 'displayName': user.display_name, 'role': user.role}
@@ -113,6 +139,7 @@ def create_app(test_config=None):
 
     @app.post('/api/auth/register')
     @limiter.limit('8 per minute')
+    @same_origin_required
     def register():
         payload = request.get_json(silent=True) or {}
         email = str(payload.get('email', '')).strip().lower()
@@ -136,6 +163,7 @@ def create_app(test_config=None):
 
     @app.post('/api/auth/login')
     @limiter.limit('12 per minute')
+    @same_origin_required
     def login():
         payload = request.get_json(silent=True) or {}
         email = str(payload.get('email', '')).strip().lower()
@@ -150,6 +178,7 @@ def create_app(test_config=None):
         return error('Google sign-in is not configured for the Flask backend. Use email and password.', 503)
 
     @app.post('/api/auth/refresh')
+    @same_origin_required
     def refresh():
         raw = request.cookies.get('refreshToken')
         if not raw:
@@ -170,6 +199,7 @@ def create_app(test_config=None):
         return establish(user)
 
     @app.post('/api/auth/logout')
+    @same_origin_required
     def logout():
         raw = request.cookies.get('refreshToken')
         if raw:
@@ -193,8 +223,11 @@ def create_app(test_config=None):
             query = query.filter_by(match_external_id=match_id)
         return query
 
-    def stream_json(stream):
-        return {'id': stream.id, 'matchId': stream.match_external_id, 'competition': stream.competition, 'url': stream.url, 'type': stream.stream_type, 'provider': stream.provider, 'authorizationReference': stream.authorization_reference, 'geographicRestrictions': stream.geographic_restrictions or [], 'available': stream.available, 'startsAt': stream.starts_at.isoformat() if stream.starts_at else None, 'endsAt': stream.ends_at.isoformat() if stream.ends_at else None}
+    def stream_json(stream, include_admin_fields=False):
+        result = {'id': stream.id, 'matchId': stream.match_external_id, 'competition': stream.competition, 'url': stream.url, 'type': stream.stream_type, 'provider': stream.provider, 'geographicRestrictions': stream.geographic_restrictions or [], 'available': stream.available, 'startsAt': stream.starts_at.isoformat() if stream.starts_at else None, 'endsAt': stream.ends_at.isoformat() if stream.ends_at else None}
+        if include_admin_fields:
+            result['authorizationReference'] = stream.authorization_reference
+        return result
 
     @app.get('/api/football/fixtures')
     @app.get('/api/matches')
@@ -456,7 +489,7 @@ def create_app(test_config=None):
     @app.get('/api/admin/streams')
     @auth_required(admin=True)
     def admin_streams():
-        return jsonify([stream_json(s) for s in Stream.query.order_by(Stream.updated_at.desc()).limit(200).all()])
+        return jsonify([stream_json(s, include_admin_fields=True) for s in Stream.query.order_by(Stream.updated_at.desc()).limit(200).all()])
 
     @app.post('/api/admin/streams')
     @auth_required(admin=True)
@@ -482,7 +515,7 @@ def create_app(test_config=None):
             stream = Stream(**values)
             db.session.add(stream)
             db.session.commit()
-            return jsonify(stream_json(stream)), 201
+            return jsonify(stream_json(stream, include_admin_fields=True)), 201
         except ValueError as exc:
             db.session.rollback()
             return error(str(exc))
@@ -496,7 +529,7 @@ def create_app(test_config=None):
             values = admin_stream_payload(request.get_json(silent=True) or {}, partial=True)
             for key, value in values.items(): setattr(stream, key, value)
             db.session.commit()
-            return jsonify(stream_json(stream))
+            return jsonify(stream_json(stream, include_admin_fields=True))
         except ValueError as exc:
             db.session.rollback()
             return error(str(exc))

@@ -140,6 +140,7 @@ def _matchora_event_normalize(event):
             channels.append({
                 'id': channel_id,
                 'name': channel.get('name') or channel.get('label') or 'Matchora channel',
+                'language': channel.get('language') or channel.get('lang'),
                 'country': channel.get('country'),
                 'quality': channel.get('quality'),
                 'playing': channel.get('playing'),
@@ -238,6 +239,7 @@ def _matchora_channels():
             feeds.append({
                 'id': int(feed_id),
                 'label': feed.get('label') or channel.get('name'),
+                'language': feed.get('language') or feed.get('lang') or channel.get('language') or channel.get('lang'),
                 'country': feed.get('country'),
                 'quality': feed.get('quality') or channel.get('quality'),
             })

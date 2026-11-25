@@ -1,7 +1,8 @@
 import { store } from './store.js';
 import { sessionReady, signedOut } from './store.js';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const configuredApi = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/+$/, '');
+const API = configuredApi.endsWith('/api') ? configuredApi : `${configuredApi}/api`;
 let refreshPromise;
 export async function api(path, options = {}, retry = true) {
   const token = store.getState().auth.accessToken;
