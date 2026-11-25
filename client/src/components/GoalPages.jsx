@@ -58,11 +58,10 @@ function LivePage() {
   const loadReplays = async (query = '', before = '', append = false) => { setReplayLoading(true); setReplayError(''); try { const params = new URLSearchParams(); if (query) params.set('q', query); if (before) params.set('before', before); const data = await api(`/replays?${params}`); const page = data.replays || []; setReplays(current => append ? [...current, ...page] : page); setReplayCursor(data.next || null); if (!append) setSelectedReplay(page[0] || null); } catch (error) { setReplayError(error.message); } finally { setReplayLoading(false); } };
   useEffect(() => {
     let active = true;
-    Promise.allSettled([api('/streams'), api('/matches/live'), api('/matches/upcoming?limit=12'), api('/channels')]).then(results => {
+    api('/streams').then(streamResult => {
       if (!active) return;
-      const [streamResult, fixtureResult, upcomingResult, channelResult] = results;
-      if (streamResult.status === 'fulfilled') {
-        const rows = (streamResult.value || []).map(row => row.type === 'MATCHORA' ? { ...row, channelsLoading: !row.channels?.length } : row);
+      {
+        const rows = (streamResult || []).map(row => row.type === 'MATCHORA' ? { ...row, channelsLoading: !row.channels?.length } : row);
         setStreams(rows);
         const matchesNeedingChannels = rows.filter(row => row.type === 'MATCHORA' && !row.channels?.length);
         Promise.allSettled(matchesNeedingChannels.map(row => api(`/football/fixtures/${encodeURIComponent(row.matchId)}`))).then(channelResults => {
@@ -79,12 +78,11 @@ function LivePage() {
           if (row.type === 'MATCHORA' && current[row.id] === undefined && row.channels?.length) selections[row.id] = defaultChannel(row.channels);
           return selections;
         }, { ...current }));
-      } else setStreamError(streamResult.reason.message);
-      if (fixtureResult.status === 'fulfilled') setLiveFixtures(fixtureResult.value.response || []);
-      if (upcomingResult.status === 'fulfilled') setUpcoming((upcomingResult.value.response || []).filter(row => !isKenyaLeague(row.league?.name, row.league?.country)).map(row => ({ id: row.fixture?.id, league: row.league?.name, home: row.teams?.home?.name, away: row.teams?.away?.name, homeBadge: initials(row.teams?.home?.name), awayBadge: initials(row.teams?.away?.name), kickoffAt: new Date(row.fixture?.date) })).filter(row => row.id && Number.isFinite(row.kickoffAt.getTime())));
-      if (channelResult.status === 'fulfilled') setChannels(channelResult.value.channels || []); else setChannelError(channelResult.reason.message);
-      setStreamLoading(false);
-    });
+      }
+    }).catch(error => { if (active) setStreamError(error.message); }).finally(() => { if (active) setStreamLoading(false); });
+    api('/matches/live').then(data => { if (active) setLiveFixtures(data.response || []); }).catch(() => {});
+    api('/matches/upcoming?limit=12').then(data => { if (active) setUpcoming((data.response || []).filter(row => !isKenyaLeague(row.league?.name, row.league?.country)).map(row => ({ id: row.fixture?.id, league: row.league?.name, home: row.teams?.home?.name, away: row.teams?.away?.name, homeBadge: initials(row.teams?.home?.name), awayBadge: initials(row.teams?.away?.name), kickoffAt: new Date(row.fixture?.date) })).filter(row => row.id && Number.isFinite(row.kickoffAt.getTime()))); }).catch(() => {});
+    api('/channels').then(data => { if (active) setChannels(data.channels || []); }).catch(error => { if (active) setChannelError(error.message); });
     loadReplays();
     return () => { active = false; };
   }, []);
