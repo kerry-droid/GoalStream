@@ -33,15 +33,24 @@ export default function Dashboard() {
   useEffect(() => {
     let active = true;
     api('/matches').then(data => { if (active && data.response?.length) setFixtures(data.response); }).catch(() => {});
-    const refreshLive = () => Promise.allSettled([api('/streams'), api('/matches/live')]).then(([streamResult, fixtureResult]) => {
+    const refreshLive = () => api('/streams').then(streams => {
       if (!active) return;
-      if (streamResult.status !== 'fulfilled') { setLiveMatches([]); return; }
-      const rows = fixtureResult.status === 'fulfilled' ? fixtureResult.value.response || [] : [];
-      const playable = (streamResult.value || []).map(stream => {
-        const source = rows.find(row => String(row.fixture?.id) === String(stream.matchId));
-        return { ...source, stream, fixture: { ...(source?.fixture || {}), id: stream.matchId, status: { ...(source?.fixture?.status || {}), elapsed: stream.minute ?? source?.fixture?.status?.elapsed } }, league: { ...(source?.league || {}), name: stream.competition || source?.league?.name }, teams: source?.teams || { home: { name: stream.home }, away: { name: stream.away } }, goals: source?.goals || stream.score || {} };
-      });
+      const playable = (streams || []).map(stream => ({
+        stream,
+        fixture: { id: stream.matchId, status: { elapsed: stream.minute } },
+        league: { name: stream.competition || 'Live football' },
+        teams: { home: { name: stream.home || 'Home' }, away: { name: stream.away || 'Away' } },
+        goals: stream.score || {},
+      }));
       setLiveMatches(playable);
+      if (playable.length) api('/matches/live').then(data => {
+        if (!active) return;
+        const rows = data.response || [];
+        setLiveMatches(current => current.map(match => {
+          const source = rows.find(row => String(row.fixture?.id) === String(match.fixture?.id));
+          return source ? { ...source, stream: match.stream, fixture: { ...source.fixture, status: { ...source.fixture?.status, elapsed: match.fixture?.status?.elapsed } } } : match;
+        }));
+      }).catch(() => {});
     }).catch(() => { if (active) setLiveMatches([]); }).finally(() => { if (active) setLiveLoading(false); });
     refreshLive(); const liveTimer = setInterval(refreshLive, 60000);
     const tick = setInterval(() => setNow(Date.now()), 30000);
