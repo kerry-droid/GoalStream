@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 
-const hosts = ['https://matchora.to', 'https://matchora.pro', 'https://es.matchora.pro'];
+const hosts = ['https://matchora.pro', 'https://matchora.to', 'https://es.matchora.pro'];
 
 const validProviderEmbed = (url, kind, id) => {
   if (!url || kind !== 'match') return '';
   try {
     const parsed = new URL(url);
-    const hosts = ['matchora.to', 'matchora.pro', 'es.matchora.pro'];
+    const hosts = ['matchora.pro', 'matchora.to', 'es.matchora.pro'];
     if (parsed.protocol !== 'https:' || !hosts.includes(parsed.hostname) || parsed.pathname !== `/embed/match/${encodeURIComponent(id)}`) return '';
     return parsed.origin + parsed.pathname;
   } catch { return ''; }
