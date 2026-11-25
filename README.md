@@ -33,7 +33,15 @@ Requirements: Python 3.11+, Node.js 20+, and PostgreSQL 15+.
 5. Install frontend dependencies from the project root with `npm install`.
 6. Start both services with `npm run dev`. Flask listens at `http://localhost:5000`; Vite listens at `http://localhost:5173`. The client API URL can be overridden with `VITE_API_URL`.
 
-For production, set `APP_ENV=production`, `COOKIE_SECURE=true`, use HTTPS, and set `RATELIMIT_STORAGE_URI` to a shared Redis URL so rate limits persist across workers. Start the API with `gunicorn --bind 0.0.0.0:5000 backend.app:app` after installing `backend/requirements.txt`.
+For production, set `APP_ENV=production`, `COOKIE_SECURE=true`, and use HTTPS. Rate limits use in-memory storage by default; set `RATELIMIT_STORAGE_URI` to a shared Redis URL only if you need limits shared across workers. Start the API with `gunicorn --bind 0.0.0.0:5000 backend.app:app` after installing `backend/requirements.txt`.
+
+## Deploying to Vercel
+
+The repository uses Vercel Services to deploy the Vite frontend and Flask API together on one domain. The root `vercel.json` routes `/api/*` to Flask and all other paths to the frontend. Import the repository root as a multi-service project and set the Vercel framework preset to **Services**; do not import only `client` or `backend`.
+
+The API needs persistent PostgreSQL storage. Add a PostgreSQL integration such as Neon. In the Vercel project's Production environment, configure `DATABASE_URL` with the PostgreSQL connection string, `FLASK_SECRET_KEY` and `JWT_ACCESS_SECRET` with independent random values of at least 32 characters, `APP_ENV=production`, and `COOKIE_SECURE=true`. Rate limits use in-memory storage by default; `RATELIMIT_STORAGE_URI` is optional and can point to Redis if you need limits shared across workers. Keep database and signing credentials in server-side environment variables; do not add them to `VITE_*` variables.
+
+The frontend calls `/api` on the same Vercel domain by default, so it does not need a separately hosted API URL or a `VITE_API_URL` value. The API service applies the checked-in Flask-Migrate migrations during production builds.
 
 ## Football data providers
 

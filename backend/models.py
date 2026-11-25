@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
-from .extensions import db
+if __package__:
+    from .extensions import db
+else:
+    from extensions import db
 
 
 def utcnow():

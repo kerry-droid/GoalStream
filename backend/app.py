@@ -16,15 +16,27 @@ from flask_limiter.util import get_remote_address
 from sqlalchemy import or_
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from .extensions import db, limiter, migrate
-from .football_provider import football_request
-from .models import Competition, Favourite, Match, RefreshSession, Stream, Team, User, utcnow
+if __package__:
+    from .extensions import db, limiter, migrate
+    from .football_provider import football_request
+    from .models import Competition, Favourite, Match, RefreshSession, Stream, Team, User, utcnow
+else:
+    from extensions import db, limiter, migrate
+    from football_provider import football_request
+    from models import Competition, Favourite, Match, RefreshSession, Stream, Team, User, utcnow
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 
 def create_app(test_config=None):
     app = Flask(__name__)
+    app_env = os.getenv('APP_ENV', 'development')
+    client_url = os.getenv('CLIENT_URL', '')
+    if not client_url and app_env != 'production':
+        client_url = 'http://localhost:5173'
+    if not client_url:
+        vercel_host = os.getenv('VERCEL_PROJECT_PRODUCTION_URL') if os.getenv('VERCEL_ENV') == 'production' else os.getenv('VERCEL_URL')
+        client_url = f'https://{vercel_host}' if vercel_host else ''
     app.config.update(
         SECRET_KEY=os.getenv('FLASK_SECRET_KEY', 'development-secret-change-this-value'),
         SQLALCHEMY_DATABASE_URI=os.getenv('DATABASE_URL', ''),
@@ -34,7 +46,7 @@ def create_app(test_config=None):
         JWT_ACCESS_SECRET=os.getenv('JWT_ACCESS_SECRET', 'development-access-secret-change-this'),
         JWT_REFRESH_DAYS=int(os.getenv('REFRESH_TOKEN_DAYS', '30')),
         ACCESS_TOKEN_MINUTES=int(os.getenv('ACCESS_TOKEN_MINUTES', '15')),
-        CLIENT_URL=os.getenv('CLIENT_URL', 'http://localhost:5173'),
+        CLIENT_URL=client_url,
         API_FOOTBALL_KEY=os.getenv('API_FOOTBALL_KEY', ''),
         API_FOOTBALL_BASE_URL=os.getenv('API_FOOTBALL_BASE_URL', 'https://v3.football.api-sports.io'),
         FOOTBALL_PROVIDER=os.getenv('FOOTBALL_PROVIDER', 'matchora').lower(),
@@ -44,7 +56,7 @@ def create_app(test_config=None):
         FOOTBALL_PROVIDER_RPM=int(os.getenv('FOOTBALL_PROVIDER_RPM', '30')),
         FOOTBALL_PROVIDER_DAILY_LIMIT=int(os.getenv('FOOTBALL_PROVIDER_DAILY_LIMIT', '90')),
         COOKIE_SECURE=os.getenv('COOKIE_SECURE', 'false').lower() == 'true',
-        APP_ENV=os.getenv('APP_ENV', 'development'),
+        APP_ENV=app_env,
         RATELIMIT_STORAGE_URI=os.getenv('RATELIMIT_STORAGE_URI', 'memory://'),
     )
     if test_config:
@@ -57,16 +69,14 @@ def create_app(test_config=None):
     if app.config['SQLALCHEMY_DATABASE_URI'].startswith(('postgres://', 'postgresql://')):
         app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLALCHEMY_DATABASE_URI'].replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1)
     if app.config['APP_ENV'] == 'production':
-        client_origin = urlparse(app.config['CLIENT_URL'])
         if not app.config['SQLALCHEMY_DATABASE_URI'] or len(app.config['JWT_ACCESS_SECRET']) < 32 or len(app.config['SECRET_KEY']) < 32:
             raise RuntimeError('Production requires DATABASE_URL, FLASK_SECRET_KEY, and JWT_ACCESS_SECRET (32+ characters).')
-        if client_origin.scheme != 'https' or not client_origin.netloc or client_origin.hostname in ('localhost', '127.0.0.1'):
+        client_origin = urlparse(app.config['CLIENT_URL']) if app.config['CLIENT_URL'] else None
+        if client_origin and (client_origin.scheme != 'https' or not client_origin.netloc or client_origin.hostname in ('localhost', '127.0.0.1')):
             raise RuntimeError('Production requires CLIENT_URL to be the public HTTPS frontend origin.')
         if not app.config['COOKIE_SECURE']:
             raise RuntimeError('Production requires COOKIE_SECURE=true.')
-        if not app.config['RATELIMIT_STORAGE_URI'].startswith(('redis://', 'rediss://')):
-            raise RuntimeError('Production requires a shared Redis RATELIMIT_STORAGE_URI.')
-    CORS(app, origins=[app.config['CLIENT_URL']], supports_credentials=True)
+    CORS(app, origins=[app.config['CLIENT_URL']] if app.config['CLIENT_URL'] else [], supports_credentials=True)
     db.init_app(app)
     migrate.init_app(app, db, directory=os.path.join(os.path.dirname(__file__), 'migrations'))
     limiter.init_app(app)
@@ -82,8 +92,14 @@ def create_app(test_config=None):
         @wraps(fn)
         def wrapped(*args, **kwargs):
             origin = request.headers.get('Origin')
-            if origin and origin.rstrip('/') != app.config['CLIENT_URL'].rstrip('/'):
-                return error('Request origin is not allowed.', 403)
+            if origin:
+                allowed = {app.config['CLIENT_URL'].rstrip('/')} if app.config['CLIENT_URL'] else set()
+                vercel_hosts = (os.getenv('VERCEL_URL'), os.getenv('VERCEL_PROJECT_PRODUCTION_URL'))
+                allowed.update(f'https://{host}' for host in vercel_hosts if host)
+                request_scheme = 'https' if app.config['APP_ENV'] == 'production' else request.scheme
+                allowed.add(f'{request_scheme}://{request.host}'.rstrip('/'))
+                if origin.rstrip('/') not in allowed:
+                    return error('Request origin is not allowed.', 403)
             return fn(*args, **kwargs)
         return wrapped
 
