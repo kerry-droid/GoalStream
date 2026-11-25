@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import jwt
 from dotenv import load_dotenv
-from flask import Flask, jsonify, make_response, request
+from flask import Flask, jsonify, make_response, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 from flask_cors import CORS
 from flask_limiter import Limiter
@@ -613,6 +613,23 @@ def create_app(test_config=None):
 
     admin_catalog(Competition, 'competitions')
     admin_catalog(Team, 'teams')
+
+    # Serve the Vite build for browser routes so direct navigation and reloads
+    # work when the app is hosted by Flask (for example, with `npm start`).
+    frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'client', 'dist'))
+
+    @app.get('/')
+    def frontend_index():
+        return send_from_directory(frontend_dist, 'index.html')
+
+    @app.get('/<path:frontend_path>')
+    def frontend_routes(frontend_path):
+        if frontend_path.startswith('api/'):
+            return error('Not found', 404)
+        requested_file = os.path.join(frontend_dist, frontend_path)
+        if os.path.isfile(requested_file):
+            return send_from_directory(frontend_dist, frontend_path)
+        return send_from_directory(frontend_dist, 'index.html')
 
     @app.errorhandler(404)
     def not_found(_exc):
