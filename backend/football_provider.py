@@ -178,7 +178,7 @@ def _matchora_fixtures(query):
         payload = _fetch(f'{base_url}/api/v1/events/{event_id}', {}, enforce_daily=False)
         events = [payload]
     elif query.get('live'):
-        payload = _fetch(f'{base_url}/api/v1/live', {}, enforce_daily=False)
+        payload = _fetch(f'{base_url}/api/v1/live', {}, cache_seconds=15, enforce_daily=False)
         events = payload.get('events', []) if isinstance(payload, dict) else payload
     elif query.get('next'):
         url = f'{base_url}/api/v1/schedule?{urlencode({"watchable": 1})}'

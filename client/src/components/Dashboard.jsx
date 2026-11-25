@@ -52,7 +52,7 @@ export default function Dashboard() {
         }));
       }).catch(() => {});
     }).catch(() => { if (active) setLiveMatches([]); }).finally(() => { if (active) setLiveLoading(false); });
-    refreshLive(); const liveTimer = setInterval(refreshLive, 60000);
+    refreshLive(); const liveTimer = setInterval(refreshLive, 20000);
     const tick = setInterval(() => setNow(Date.now()), 30000);
     return () => { active = false; clearInterval(tick); clearInterval(liveTimer); };
   }, []);
