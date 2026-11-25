@@ -1,0 +1,11 @@
+{
+  "name": "goalstream",
+  "private": true,
+  "workspaces": ["client"],
+  "scripts": {
+    "dev": "concurrently \"./.venv/bin/python -m flask --app backend.app run --debug --host 0.0.0.0 --port 5000\" \"npm run dev -w client\"",
+    "build": "npm run build -w client",
+    "start": "gunicorn --bind 0.0.0.0:5000 backend.app:app"
+  },
+  "devDependencies": { "concurrently": "^9.1.2" }
+}
